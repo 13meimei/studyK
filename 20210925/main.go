@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -34,22 +35,24 @@ func main() {
 
 	flag.Parse()
 
-	m := &MyIn{}
+	m := NewMyIn()
+	m.SetMux()
+	srv := &http.Server{
+		Addr:              *flagAddress,
+		Handler:           m.GetMux(),
+	}
+	m.SetHttpServer(srv)
 
 	go func() {
-		m.srv = &http.Server{
-			Addr:              *flagAddress,
-			Handler:           m,
-		}
 		fmt.Println("http server listen", *flagAddress)
-		err := m.srv.ListenAndServe()
+		err := srv.ListenAndServe()
 		if err != nil {
 			panic(err)
 		}
 	}()
 
 	fmt.Printf("server<listen: %s> running !!!\n", *flagAddress)
-	fmt.Println("GET /healthz --> MyIn")
+	fmt.Println("GET /healthz --> MyIn.Healthz")
 	handleSignal()
 	fmt.Println("server stop !!!")
 
@@ -77,9 +80,41 @@ func handleSignal() int {
 
 type MyIn struct {
 	srv *http.Server
+	mux *http.ServeMux
 }
 
-func (m *MyIn) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func NewMyIn() *MyIn {
+	return &MyIn{}
+}
+
+func (m *MyIn) SetHttpServer(srv *http.Server) {
+	m.srv = srv
+}
+
+func (m *MyIn) SetMux() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/heap", pprof.Handler("heap").ServeHTTP)
+	mux.HandleFunc("/debug/pprof/goroutine", pprof.Handler("goroutine").ServeHTTP)
+	mux.HandleFunc("/debug/pprof/allocs", pprof.Handler("allocs").ServeHTTP)
+	mux.HandleFunc("/debug/pprof/block", pprof.Handler("block").ServeHTTP)
+	mux.HandleFunc("/debug/pprof/threadcreate", pprof.Handler("threadcreate").ServeHTTP)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	mux.HandleFunc("/debug/pprof/mutex", pprof.Handler("mutex").ServeHTTP)
+
+	mux.HandleFunc("/healthz", m.Healthz)
+
+	m.mux = mux
+}
+
+func (m *MyIn) GetMux() *http.ServeMux {
+	return m.mux
+}
+
+func (m *MyIn) Healthz(w http.ResponseWriter, req *http.Request) {
 	// 将 request 的 header 写入 response header
 	for k, vs := range req.Header {
 		fmt.Printf("request header key = %s value = %v\n", k, vs)
